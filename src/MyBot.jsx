@@ -12,7 +12,7 @@ const SimpleBot = () => {
         text: userInput,
         sender: 'user',
       };
-  
+
       // Отправка данных на бэкенд
       const response = await fetch('http://127.0.0.1:5000/bot', {
         method: 'POST',
