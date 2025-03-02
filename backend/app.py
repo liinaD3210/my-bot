@@ -4,9 +4,6 @@ from flask_cors import CORS
 import json
 
 # LangChain импорт
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.vectorstores import FAISS
 from langchain.docstore.document import Document
 
 # Модель GigaChat (кастомный класс)
@@ -33,19 +30,21 @@ CORS(app)
 # --- Ваш кастомный Prompt ---
 # Обратите внимание, что теперь у нас два инструмента: "json_name_search" и "retriever_search".
 # В инструкции укажем, когда и какой инструмент применять.
+# --- Ваш кастомный Prompt ---
+# Обратите внимание, что теперь у нас два инструмента: "json_name_search" и "retriever_search".
+# В инструкции укажем, когда и какой инструмент применять.
 REACT_PROMPT_TEMPLATE = """
-Если ты собираешься вызвать инструмент, ни в коем случае не добавляй блок Final Answer в том же сообщении. Если ты пытаешься дать итоговый ответ (Final Answer), не упоминай никаких Action.
-Ты — консультант кофейни, у тебя есть доступ к инструментам:
-{tools}
+Ты — консультант кофейни, ты должен всегда пользоваться инструментами {tools}. Никогда не выдумывай ничего совего, ты должен выдавать ответы только использвоава инструмент!!!
+
 Имена инструментов: {tool_names}.
 
 
 Всегда строго действуй по этой цепочке действий:
 1. Проанализируй вопрос пользователя.
-2. Если в вопросе явно упомянуто конкретное название товара (например, "Эрл Грей" или "Айва с Персиком"), выдели это название в {{запрос к инструменту}}.
+2. Если в вопросе явно упомянуто конкретное название товара (например, "Эрл Грей", "Айва с Персиком", "Японская Липа", "Сенча"), выдели это НазваниеТовара.
 3. Всегда пользуйся инструментом (даже если ты думаешь, что справишься без него):
-   - Action: json_name_search  
-   - Action Input: {{запрос к инструменту}}
+   - Action: {tool_names} 
+   - Action Input: НазваниеТовара
 4. После того как система подставит Observation (результат работы инструмента), сформулируй **единственный** блок:
    - Final Answer: ... (твоя итоговая формулировка на основе Observation.)
 
@@ -57,6 +56,7 @@ REACT_PROMPT_TEMPLATE = """
 
 {agent_scratchpad}
 """
+
 
 class CustomOutputParser(AgentOutputParser):
     """
@@ -102,19 +102,23 @@ class JSONNameSearchTool(BaseTool):
     name: str = "json_name_search"
     description: str = (
         "Быстрый поиск по названию товара в JSON. "
-        "Используй, когда пользователь явно назвал товар (например 'чай Эрл Грей')."
+        "Используй всегда"
     )
 
     json_path: str
 
     def _run(self, query: str) -> str:
+        # ---- Вот эти два print позволят видеть вход/выход инструмента
+        print(f"[DEBUG] Tool '{self.name}' called with input: {query}")
+
         try:
             with open(self.json_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
         except Exception as e:
-            return f"Ошибка при чтении JSON: {e}"
+            result = f"Ошибка при чтении JSON: {e}"
+            print(f"[DEBUG] Tool '{self.name}' output: {result}")
+            return result
 
-        # Небольшая логика: считаем, что query = название товара или часть названия
         query_lower = query.strip().lower()
         results = []
         for idx, item in enumerate(data, start=1):
@@ -122,7 +126,6 @@ class JSONNameSearchTool(BaseTool):
             desc = item.get('Описание', '')
             price = item.get('Цена', '')
 
-            # Простейшее частичное совпадение:
             if query_lower in name.lower():
                 snippet = (
                     f"Название: {name}\n"
@@ -132,11 +135,16 @@ class JSONNameSearchTool(BaseTool):
                 results.append(f"[doc {idx}] {snippet}")
 
         if not results:
-            return ""  # Если ничего не найдено
-        return "\n".join(results)
+            result = ""  # Если ничего не найдено
+        else:
+            result = "\n".join(results)
+        
+        print(f"[DEBUG] Tool '{self.name}' output: {result}")
+        return result
 
     async def _arun(self, query: str) -> str:
         raise NotImplementedError("Async not implemented")
+
 
 
 class LangChainQueryProcessor:
@@ -164,11 +172,6 @@ class LangChainQueryProcessor:
             verify_ssl_certs=False,
         )
 
-        # 1. Инициализируем векторное хранилище (FAISS) по JSON
-        self.vectorstore = self._initialize_vectorstore(json_file)
-        self.retriever = self.vectorstore.as_retriever(search_kwargs={"k": 3})
-
-        # 2. Создаём два инструмента: FAISS-поиск и поиск по названию
         self.json_name_search_tool = JSONNameSearchTool(json_path=json_file)
 
         self.tools = [
@@ -210,33 +213,9 @@ class LangChainQueryProcessor:
             memory=self.memory,
             verbose=True,
             handle_parsing_errors=True,
-            max_iterations=2
+            max_iterations=5
         )
 
-    def _initialize_vectorstore(self, json_file):
-        """Читает JSON, сплитит и создаёт векторное хранилище (FAISS)."""
-        with open(json_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-
-        docs = []
-        for item in data:
-            # Составим строку из всех ключевых полей (Название, Описание, Цена)
-            page_content = (
-                f"Название: {item.get('Название', '')}\n"
-                f"Описание: {item.get('Описание', '')}\n"
-                f"Цена: {item.get('Цена', '')}"
-            )
-            docs.append(Document(page_content=page_content))
-
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=200
-        )
-        splitted_docs = text_splitter.split_documents(docs)
-
-        embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-        vectorstore = FAISS.from_documents(splitted_docs, embedding_model)
-        return vectorstore
 
     def process_query_with_agent(self, user_input: str) -> str:
         """Вызываем нашего агента (с учётом истории в памяти)."""
