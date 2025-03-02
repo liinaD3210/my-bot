@@ -22,49 +22,117 @@ from langchain.memory import ConversationBufferMemory
 import gigachat.context
 from typing import Any
 
+import re
+from langchain.schema import AgentAction, AgentFinish
+from langchain.agents.agent import AgentOutputParser
+from typing import Union
+
 app = Flask(__name__)
 CORS(app)
 
 # --- Ваш кастомный Prompt ---
+# Обратите внимание, что теперь у нас два инструмента: "json_name_search" и "retriever_search".
+# В инструкции укажем, когда и какой инструмент применять.
 REACT_PROMPT_TEMPLATE = """
-Ты — консультант кофейни, у тебя есть доступ к инструменту:
+Если ты собираешься вызвать инструмент, ни в коем случае не добавляй блок Final Answer в том же сообщении. Если ты пытаешься дать итоговый ответ (Final Answer), не упоминай никаких Action.
+Ты — консультант кофейни, у тебя есть доступ к инструментам:
 {tools}
-
 Имена инструментов: {tool_names}.
 
-Каждый твой ответ должен строго соблюдать формат ReAct:
-1) Action: retriever_search
-2) Action Input: {input}
-3) Observation: (этот блок с результатами инструмента вставляет система — НЕ выдумывай его сам!)
-4) Final Answer: ... (ответ пользователю на основе Observation)
 
-Важные правила:
-- Ты обязан всегда совершить ровно один вызов Action: retriever_search.
-- Не пиши Observation сам. Дождись, пока система подставит результаты поиска, и только потом на следующей строке вынеси итог в Final Answer.
-- Не вставляй текст Observation дословно в Final Answer. Сформулируй ответ своими словами.
-- Если Observation не нашлось (пустое), скажи «К сожалению, я не нашёл подходящего ответа».
-- Строка "Final Answer: …" всегда идёт последней, и ответ на этом заканчивается.
+Всегда строго действуй по этой цепочке действий:
+1. Проанализируй вопрос пользователя.
+2. Если в вопросе явно упомянуто конкретное название товара (например, "Эрл Грей" или "Айва с Персиком"), выдели это название в {{запрос к инструменту}}.
+3. Всегда пользуйся инструментом (даже если ты думаешь, что справишься без него):
+   - Action: json_name_search  
+   - Action Input: {{запрос к инструменту}}
+4. После того как система подставит Observation (результат работы инструмента), сформулируй **единственный** блок:
+   - Final Answer: ... (твоя итоговая формулировка на основе Observation.)
+
+Важное правило: **Не выводи одновременно вызов инструмента (Action/Action Input) и финальный ответ (Final Answer) в одном сообщении!** Если Observation уже получено, выводи только финальный ответ.
+
+- Если Observation пустое, ответь: «К сожалению, я не нашёл подходящего ответа».
 
 Вопрос пользователя: {input}
 
 {agent_scratchpad}
 """
 
-class RetrieverTool(BaseTool):
-    """Кастомный инструмент для поиска по векторному хранилищу."""
-    retriever: Any
-    name: str = "retriever_search"
+class CustomOutputParser(AgentOutputParser):
+    """
+    Кастомный OutputParser, который:
+      - Удаляет строки, начинающиеся с "Thought:"
+      - Если находит блок "Final Answer:", возвращает AgentFinish
+      - Если находит шаблон для действия (Action + Action Input на отдельных строках),
+        возвращает AgentAction
+      - Иначе возвращает AgentFinish с полным текстом.
+    """
+    def parse(self, llm_output: str) -> Union[AgentAction, AgentFinish]:
+        # Удаляем строки, начинающиеся с "Thought:"
+        cleaned_lines = [
+            line for line in llm_output.splitlines() 
+            if not line.strip().startswith("Thought:")
+        ]
+        cleaned_output = "\n".join(cleaned_lines).strip()
+        
+        # Если найден блок Final Answer, возвращаем финальный ответ
+        if "Final Answer:" in cleaned_output:
+            final_answer = cleaned_output.split("Final Answer:")[-1].strip()
+            return AgentFinish(return_values={"output": final_answer}, log=cleaned_output)
+        
+        # Ожидаем, что действие записано в виде двух строк:
+        # Первая: Action: <tool>
+        # Вторая: Action Input: <input>
+        action_regex = r"Action:\s*([^\n]+)\nAction Input:\s*(.*)"
+        match = re.search(action_regex, cleaned_output, re.DOTALL)
+        if match:
+            tool = match.group(1).strip()
+            tool_input = match.group(2).strip()
+            return AgentAction(tool=tool, tool_input=tool_input, log=cleaned_output)
+        
+        # Если ничего не найдено, возвращаем весь текст как финальный ответ
+        return AgentFinish(return_values={"output": cleaned_output}, log=cleaned_output)
+
+
+class JSONNameSearchTool(BaseTool):
+    """
+    Инструмент, который загружает JSON и ищет *строго/частично* по 'Название' товара.
+    Возвращает найденные записи (название, описание, цена) в текстовом виде.
+    """
+    name: str = "json_name_search"
     description: str = (
-        "Используй этот инструмент, когда в истории сообщений нет ответа на вопрос,"
-        "и нужно найти дополнительную информацию в JSON базе."
+        "Быстрый поиск по названию товара в JSON. "
+        "Используй, когда пользователь явно назвал товар (например 'чай Эрл Грей')."
     )
 
+    json_path: str
+
     def _run(self, query: str) -> str:
-        docs = self.retriever.get_relevant_documents(query)
+        try:
+            with open(self.json_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            return f"Ошибка при чтении JSON: {e}"
+
+        # Небольшая логика: считаем, что query = название товара или часть названия
+        query_lower = query.strip().lower()
         results = []
-        for i, doc in enumerate(docs, start=1):
-            snippet = doc.page_content.replace("\n", " ")
-            results.append(f"[doc {i}] {snippet}")
+        for idx, item in enumerate(data, start=1):
+            name = item.get('Название', '')
+            desc = item.get('Описание', '')
+            price = item.get('Цена', '')
+
+            # Простейшее частичное совпадение:
+            if query_lower in name.lower():
+                snippet = (
+                    f"Название: {name}\n"
+                    f"Описание: {desc}\n"
+                    f"Цена: {price}"
+                )
+                results.append(f"[doc {idx}] {snippet}")
+
+        if not results:
+            return ""  # Если ничего не найдено
         return "\n".join(results)
 
     async def _arun(self, query: str) -> str:
@@ -73,8 +141,8 @@ class RetrieverTool(BaseTool):
 
 class LangChainQueryProcessor:
     """
-    Класс, инкапсулирующий логику чтения JSON, создания векторного индекса,
-    и общения через ReAct-агента (с учётом истории в памяти).
+    Класс, инкапсулирующий логику чтения JSON, создания векторного индекса
+    и общения через ReAct-агента.
     """
     def __init__(self, json_file):
         # Установим заголовок для GigaChat (при необходимости)
@@ -96,57 +164,60 @@ class LangChainQueryProcessor:
             verify_ssl_certs=False,
         )
 
-        # Инициализируем векторное хранилище (FAISS) по JSON
+        # 1. Инициализируем векторное хранилище (FAISS) по JSON
         self.vectorstore = self._initialize_vectorstore(json_file)
-
-        # Создаём retriever
         self.retriever = self.vectorstore.as_retriever(search_kwargs={"k": 3})
 
-        # Создаём инструмент для поиска
-        self.retriever_tool = RetrieverTool(retriever=self.retriever)
+        # 2. Создаём два инструмента: FAISS-поиск и поиск по названию
+        self.json_name_search_tool = JSONNameSearchTool(json_path=json_file)
+
         self.tools = [
             Tool(
-                name=self.retriever_tool.name,
-                func=self.retriever_tool.run,
-                description=self.retriever_tool.description
+                name=self.json_name_search_tool.name,
+                func=self.json_name_search_tool.run,
+                description=self.json_name_search_tool.description
             )
         ]
 
-        # Создаём память, чтобы агент мог учитывать предыдущие сообщения
+        # 3. Память
         self.memory = ConversationBufferMemory(
             memory_key="chat_history",
             return_messages=True
         )
 
-        # Формируем PromptTemplate на основе REACT_PROMPT_TEMPLATE
+        # 4. PromptTemplate
         self.custom_prompt = PromptTemplate(
-            input_variables=["input", "tools", "tool_names", "agent_scratchpad"],
+            input_variables=["input","tools", "tool_names", "agent_scratchpad"],
             template=REACT_PROMPT_TEMPLATE
         )
 
-        # Создаём ReAct-агента (без verbose)
+        # 5. Создаём ReAct-агента
         self.agent = create_react_agent(
             llm=self.model,
             tools=self.tools,
-            prompt=self.custom_prompt
+            prompt=self.custom_prompt,
+            output_parser = CustomOutputParser()
+            #output_parser = CustomOutputParser()
+            # Важно: tool_names отныне определяется автоматически,
+            # но если нужно жёстко прописать, можно через partial_variables
+            # или переопределить template, где {tools}, {tool_names} и т.д.
         )
 
-        # Оборачиваем в AgentExecutor
+        # Оборачиваем агента в Executor
         self.agent_executor = AgentExecutor.from_agent_and_tools(
             agent=self.agent,
             tools=self.tools,
             memory=self.memory,
             verbose=True,
-            handle_parsing_errors=True
+            handle_parsing_errors=True,
+            max_iterations=2
         )
 
     def _initialize_vectorstore(self, json_file):
         """Читает JSON, сплитит и создаёт векторное хранилище (FAISS)."""
-        # Загружаем JSON
         with open(json_file, "r", encoding="utf-8") as f:
             data = json.load(f)
 
-        # Формируем список документов
         docs = []
         for item in data:
             # Составим строку из всех ключевых полей (Название, Описание, Цена)
@@ -157,34 +228,26 @@ class LangChainQueryProcessor:
             )
             docs.append(Document(page_content=page_content))
 
-        # При желании можно применять TextSplitter, если тексты большие.
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
             chunk_overlap=200
         )
         splitted_docs = text_splitter.split_documents(docs)
 
-        # Создаём векторное хранилище
         embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
         vectorstore = FAISS.from_documents(splitted_docs, embedding_model)
         return vectorstore
 
     def process_query_with_agent(self, user_input: str) -> str:
-        """Вызываем нашего собранного агента (с учётом истории в памяти)."""
+        """Вызываем нашего агента (с учётом истории в памяти)."""
         result = self.agent_executor({"input": user_input})
         response = result["output"]
         return response
 
-# --- Flask-приложение ---
 
-
-JSON_PATH = r"C:\Users\Daniil\Projects\my-bot\tea_data.json"  # <-- Вместо PDF
+JSON_PATH = r"C:\Users\Daniil\Projects\my-bot\tea_data.json"
 
 file_search = LangChainQueryProcessor(JSON_PATH)
-
-
-app = Flask(__name__)
-CORS(app)
 
 @app.route('/bot', methods=['POST'])
 def bot():
