@@ -1,42 +1,79 @@
 import json
-from sentence_transformers import SentenceTransformer
-from sklearn.metrics.pairwise import cosine_similarity
+import torch
 
-# Загружаем модель для создания эмбеддингов
-model = SentenceTransformer('paraphrase-MiniLM-L6-v2')
+# ---------------------------
+# 1. Загрузка данных из JSON
+reference_path = r"C:\Users\Daniil\Projects\my-bot\questions\tea_data_questions.json"  # Путь к JSON с эталонными ответами
+model_path = r"C:\Users\Daniil\Projects\my-bot\backend\responses\tea_data_responses.json"           # Путь к JSON с ответами модели
 
-def calculate_similarity(answers_file, evaluation_file, threshold=0.8):
-    # Загружаем ответы модели
-    with open(answers_file, "r", encoding="utf-8") as f:
-        model_answers = json.load(f)
+
+with open(reference_path, "r", encoding="utf-8") as f:
+    reference_data = json.load(f)
+
+with open(model_path, "r", encoding="utf-8") as f:
+    model_data = json.load(f)
+
+# --------------------------------
+# 2. Сопоставление пар по "Вопрос"
+# --------------------------------
+# Создадим словарь для model_data, чтобы быстро находить ответ модели по "Вопрос".
+model_dict = {item["Вопрос"]: item["Ответ модели"] for item in model_data}
+
+# Собираем пары (Вопрос, эталон, модель)
+pairs = []
+for ref_item in reference_data:
+    question = ref_item["Вопрос"]
+    ref_answer = ref_item["Эталонный ответ"]
     
-    # Загружаем эталонные ответы
-    with open(evaluation_file, "r", encoding="utf-8") as f:
-        reference_answers = json.load(f)
+    # Ищем соответствующий ответ из model_data
+    model_answer = model_dict.get(question)
+    if model_answer is not None:
+        pairs.append((question, ref_answer, model_answer))
 
-    correct_answers = 0
-    total_answers = len(reference_answers)
+# Извлекаем списки для вычислений
+ref_answers = [p[1] for p in pairs]
+model_answers = [p[2] for p in pairs]
 
-    # Сравниваем ответы модели с эталонными ответами
-    for model_answer, reference_answer in zip(model_answers, reference_answers):
-        question = model_answer['question']
-        model_answer_text = model_answer['answer']
-        reference_answer_text = reference_answer['answer']
+# -------------------------------------------------
+# 3. Подсчёт BERTScore (семантическая близость)
+# -------------------------------------------------
+from bert_score import score
 
-        # Преобразуем ответы в эмбеддинги
-        model_embedding = model.encode(model_answer_text)
-        reference_embedding = model.encode(reference_answer_text)
+# Для русского языка указано lang='ru'
+P, R, F1 = score(model_answers, ref_answers, lang='ru')
 
-        # Рассчитываем схожесть между эмбеддингами
-        similarity = cosine_similarity([model_embedding], [reference_embedding])[0][0]
+mean_bert_f1 = torch.mean(F1)
+print(f"Средний BERTScore (F1): {mean_bert_f1:.4f}")
 
-        # Если схожесть больше порогового значения, считаем ответ правильным
-        if similarity >= threshold:
-            correct_answers += 1
+# ---------------------------------------------------------
+# 4. Подсчёт косинусного сходства с Sentence-BERT
+# ---------------------------------------------------------
+from sentence_transformers import SentenceTransformer
+import torch.nn.functional as F
 
-    # Рассчитываем точность
-    accuracy = correct_answers / total_answers * 100
-    print(f"Accuracy: {accuracy:.2f}%")
+# Выбираем многоязычную модель Sentence-BERT
+model_sbert = SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')
 
-# Пример использования
-calculate_similarity('answers.json', 'evaluation_dataset.json', threshold=0.8)
+ref_embeddings = model_sbert.encode(ref_answers, convert_to_tensor=True)
+model_embeddings = model_sbert.encode(model_answers, convert_to_tensor=True)
+
+cosine_similarities = F.cosine_similarity(model_embeddings, ref_embeddings, dim=1)
+mean_cosine_similarity = torch.mean(cosine_similarities)
+
+print(f"Средняя косинусная похожесть (Sentence-BERT): {mean_cosine_similarity:.4f}")
+
+# -------------------------
+# 5. Вывод результатов
+# -------------------------
+print("----- Итоговые результаты -----")
+for i, (question, ref_ans, model_ans) in enumerate(pairs):
+    print(f"\nПара {i+1}:")
+    print(f"  Вопрос:           {question}")
+    print(f"  Эталонный ответ:  {ref_ans}")
+    print(f"  Ответ модели:     {model_ans}")
+    print(f"  BERTScore (F1):   {F1[i].item():.4f}")
+    print(f"  Cosine Similarity:{cosine_similarities[i].item():.4f}")
+
+print("\nСводка по всем парам:")
+print(f"Средний BERTScore F1: {mean_bert_f1:.4f}")
+print(f"Средняя косинусная похожесть (SBERT): {mean_cosine_similarity:.4f}")
