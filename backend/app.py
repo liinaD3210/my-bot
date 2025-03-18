@@ -44,7 +44,10 @@ class JSONNameSearchTool(BaseTool):
 
     def _run(self, query: str) -> str:
         print(f"[DEBUG] Tool '{self.name}' called with input: {query}")
-
+        if len(query.split()) < 1:
+            print("ОШИБКА!!! Пустая строка")
+            return ""
+        
         try:
             with open(self.json_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -94,7 +97,9 @@ class JSONOrderSearchTool(BaseTool):
 
     def _run(self, query: str) -> str:
         print(f"[DEBUG] Tool '{self.name}' called with input: {query}")
-
+        if len(query.split()) < 1:
+            print("ОШИБКА!!! Пустая строка")
+            return ""
         try:
             with open(self.json_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -148,7 +153,9 @@ class JSONSimilarProductsTool(BaseTool):
 
     def _run(self, query: str) -> str:
         print(f"[DEBUG] Tool '{self.name}' called with input: {query}")
-
+        if len(query.split()) < 1:
+            print("ОШИБКА!!! Пустая строка")
+            return ""
         try:
             with open(self.json_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -248,7 +255,7 @@ class LangChainQueryProcessor:
         self.model = GigaChat(
             credentials=GIGACHAT_CREDENTIALS,
             scope="GIGACHAT_API_PERS",
-            model="GigaChat-Pro",
+            model="GigaChat-2-Max",
             verify_ssl_certs=False,
         )
 
@@ -303,14 +310,29 @@ class LangChainQueryProcessor:
             memory=self.memory,
             verbose=True,
             handle_parsing_errors=True,
-            max_iterations=5
+            max_iterations=10
         )
 
     def process_query_with_agent(self, user_input: str) -> str:
-        """Вызываем нашего агента (с учётом истории в памяти)."""
-        result = self.agent_executor({"input": user_input})
-        response = result["output"]
+        # Сохраняем текущий запрос в истории
+        self.memory.save_context({"input": user_input}, {"output": ""})  # Пустой вывод, пока нет ответа
+        
+        # Получаем последние 6 сообщений из памяти (3 вопроса и 3 ответа)
+        chat_history = self.memory.load_memory_variables({})["chat_history"][-6:]
+        
+        # Формируем контекст с вопросами и ответами
+        context = "\n".join([f"Q: {chat_history[i].content}\nA: {chat_history[i + 1].content}" for i in range(0, len(chat_history), 2)])
+
+        # Создаем запрос с контекстом
+        response = self.agent_executor.invoke({
+            "input": user_input + "            Предыдущие сообщения: " + context 
+        })
+
+        # Обновляем память с новым ответом
+        self.memory.save_context({"input": user_input}, {"output": response})
+
         return response
+
 
 
 # ====================== ИНИЦИАЛИЗАЦИЯ НАШЕГО КЛАССА ======================

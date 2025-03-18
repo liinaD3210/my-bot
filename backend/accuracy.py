@@ -1,11 +1,13 @@
 import json
 import torch
+from sentence_transformers import SentenceTransformer
+import torch.nn.functional as F
 
 # ---------------------------
 # 1. Загрузка данных из JSON
-reference_path = r"C:\Users\Daniil\Projects\my-bot\questions\tea_data_questions.json"  # Путь к JSON с эталонными ответами
-model_path = r"C:\Users\Daniil\Projects\my-bot\backend\responses\tea_data_responses.json"           # Путь к JSON с ответами модели
-
+# ---------------------------
+reference_path = r"C:\Users\Daniil\Projects\my-bot\questions\tea_data_questions.json"  # Эталонные ответы
+model_path = r"C:\Users\Daniil\Projects\my-bot\backend\responses\tea_descriptions.json"  # Ответы модели
 
 with open(reference_path, "r", encoding="utf-8") as f:
     reference_data = json.load(f)
@@ -16,64 +18,75 @@ with open(model_path, "r", encoding="utf-8") as f:
 # --------------------------------
 # 2. Сопоставление пар по "Вопрос"
 # --------------------------------
-# Создадим словарь для model_data, чтобы быстро находить ответ модели по "Вопрос".
+# Создаём словарь для быстрого поиска ответа модели по "Вопрос".
 model_dict = {item["Вопрос"]: item["Ответ модели"] for item in model_data}
 
-# Собираем пары (Вопрос, эталон, модель)
+# Собираем пары (Вопрос, эталонный ответ, ответ модели)
 pairs = []
 for ref_item in reference_data:
     question = ref_item["Вопрос"]
     ref_answer = ref_item["Эталонный ответ"]
-    
-    # Ищем соответствующий ответ из model_data
     model_answer = model_dict.get(question)
     if model_answer is not None:
         pairs.append((question, ref_answer, model_answer))
 
-# Извлекаем списки для вычислений
+# Извлекаем списки эталонных и модельных ответов
 ref_answers = [p[1] for p in pairs]
 model_answers = [p[2] for p in pairs]
 
-# -------------------------------------------------
-# 3. Подсчёт BERTScore (семантическая близость)
-# -------------------------------------------------
-from bert_score import score
-
-# Для русского языка указано lang='ru'
-P, R, F1 = score(model_answers, ref_answers, lang='ru')
-
-mean_bert_f1 = torch.mean(F1)
-print(f"Средний BERTScore (F1): {mean_bert_f1:.4f}")
-
 # ---------------------------------------------------------
-# 4. Подсчёт косинусного сходства с Sentence-BERT
+# 3. Подсчёт косинусного сходства с Sentence-BERT
 # ---------------------------------------------------------
-from sentence_transformers import SentenceTransformer
-import torch.nn.functional as F
-
-# Выбираем многоязычную модель Sentence-BERT
+# Используем многоязычную модель Sentence-BERT
 model_sbert = SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')
 
 ref_embeddings = model_sbert.encode(ref_answers, convert_to_tensor=True)
 model_embeddings = model_sbert.encode(model_answers, convert_to_tensor=True)
 
+# Вычисляем косинусное сходство для каждой пары
 cosine_similarities = F.cosine_similarity(model_embeddings, ref_embeddings, dim=1)
+
+# Функция для расчёта итогового балла по правилу
+def calculate_score(similarity):
+    if similarity >= 0.75:
+        return 100
+    elif similarity >= 0.5:
+        return similarity * 100
+    else:
+        return 0
+
+# Применяем функцию к каждой паре
+scores = [calculate_score(sim.item()) for sim in cosine_similarities]
 mean_cosine_similarity = torch.mean(cosine_similarities)
-
-print(f"Средняя косинусная похожесть (Sentence-BERT): {mean_cosine_similarity:.4f}")
+mean_score = sum(scores) / len(scores)
 
 # -------------------------
-# 5. Вывод результатов
+# 4. Формирование результатов для сохранения
 # -------------------------
-print("----- Итоговые результаты -----")
+results_lines = []
+results_lines.append("----- Итоговые результаты -----\n")
 for i, (question, ref_ans, model_ans) in enumerate(pairs):
-    print(f"\nПара {i+1}:")
-    print(f"  Вопрос:           {question}")
-    print(f"  Эталонный ответ:  {ref_ans}")
-    print(f"  Ответ модели:     {model_ans}")
-    print(f"  BERTScore (F1):   {F1[i].item():.4f}")
-    print(f"  Cosine Similarity:{cosine_similarities[i].item():.4f}")
+    sim = cosine_similarities[i].item()
+    score_val = scores[i]
+    results_lines.append(f"Пара {i+1}:\n")
+    results_lines.append(f"  Вопрос:            {question}\n")
+    results_lines.append(f"  Эталонный ответ:   {ref_ans}\n")
+    results_lines.append(f"  Ответ модели:      {model_ans}\n")
+    results_lines.append(f"  Cosine Similarity: {sim:.4f}\n")
+    results_lines.append(f"  Итоговый балл:     {score_val:.2f}%\n\n")
 
-print("\nСводка по всем парам:")
-print(f"Средний BERTScore F1: {mean_bert_f1:.4f}")
-print(f"Средняя косинусная похожесть (SBERT): {mean_cosine_similarity:.4f}")
+results_lines.append("----- Сводка по всем парам -----\n")
+results_lines.append(f"Средняя Cosine Similarity (SBERT): {mean_cosine_similarity:.4f}\n")
+results_lines.append(f"Средний итоговый балл: {mean_score:.2f}%\n")
+
+results_text = "".join(results_lines)
+
+# Вывод в консоль
+print(results_text)
+
+# -------------------------
+# 5. Сохранение результатов в файл
+# -------------------------
+output_path = r"C:\Users\Daniil\Projects\my-bot\backend\test_results\tea_data_results.txt"
+with open(output_path, "w", encoding="utf-8") as out_file:
+    out_file.write(results_text)

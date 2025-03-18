@@ -48,7 +48,7 @@ class JSONNameSearchTool(BaseTool):
 
 if __name__ == "__main__":
     # Определяем путь к тестовому JSON-файлу
-    json_file = r"C:\Users\Daniil\Projects\my-bot\similar_products.json"
+    json_file = r"C:\Users\Daniil\Projects\my-bot\tea_data.json"
 
     # Если файла не существует, создаём тестовый JSON
     if not os.path.exists(json_file):

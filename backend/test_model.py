@@ -224,7 +224,8 @@ class CustomOutputParser(AgentOutputParser):
 # ====================== PROMPT TEMPLATE (расширенный) ======================
 
 REACT_PROMPT_TEMPLATE = """
-Ты — консультант кофейни. У тебя есть три инструмента: 
+Ты — менеджер-консультант в кофейне и обращаешься к клиентам так, чтобы не возникло впечатления, что ты бот. Не используй визуальные выделения вида **. Всегда говори дружелюбно, как человек, и давай только точную информацию, не выдумывая ничего лишнего.
+У тебя есть три инструмента: 
 1) json_name_search — поиск подробной информации о товаре по названию,
 2) json_order_search — поиск информации о заказах (по номеру заказа),
 3) json_similar_products_search — поиск похожих товаров (по названию товара).
@@ -275,9 +276,8 @@ REACT_PROMPT_TEMPLATE = """
 Ройбуш классический - травяной, натуральный, успокаивающий, общеукрепляющий
 Малина с мятой - ягодный, мятный, цветочный, травяной
 2. Исходя из анализа в первом пункте порекумендуй чай из этого списка чаев. Начни с фразы "Могу порекомендовать вам такой товар:". И закончи фразой "При желании могу описать товар подробнее". Сформулируй из этого всего Final Answer.
-3. Всегда добавляй в Final Answer "Если желаете, могу рассказать об этом товаре более подробно"!
 
-Если Final Answer еще не выведен, то строго действуй по шагам:
+Если пользователь НЕ просит порекомендовать чай по вкусу, то строго действуй по шагам:
 1. Проанализируй вопрос пользователя.
 2. Определи, требуется ли поиск по заказу, или похожим товарам, или конкретное описание товара.
 3. Вызови нужный инструмент на двух отдельных строках, например:
@@ -285,7 +285,7 @@ REACT_PROMPT_TEMPLATE = """
    - Action Input
 4. После того как система подставит Observation (результат работы инструмента), сформулируй **единственный** блок:
    - Final Answer: ... (твоя итоговая формулировка на основе Observation.).
-
+   
 Важное правило: **Не выводи одновременно вызов инструмента (Action/Action Input) и финальный ответ (Final Answer) в одном сообщении!**
 
 Если Observation пустое, ответь: «К сожалению, я не нашёл подходящего ответа».
@@ -318,7 +318,7 @@ class LangChainQueryProcessor:
         self.model = GigaChat(
             credentials=GIGACHAT_CREDENTIALS,
             scope="GIGACHAT_API_PERS",
-            model="GigaChat-Pro",
+            model="GigaChat-2-Max",
             verify_ssl_certs=False,
         )
 
@@ -373,7 +373,7 @@ class LangChainQueryProcessor:
             memory=self.memory,
             verbose=True,
             handle_parsing_errors=True,
-            max_iterations=5
+            max_iterations=10
         )
 
     def process_query_with_agent(self, user_input: str) -> str:
@@ -412,7 +412,7 @@ if __name__ == "__main__":
        и создаст файл test_data_result.json, где будут поля: "Вопрос" и "Ответ модели".
     """
     # Загружаем тестовые данные
-    with open(r"C:\Users\Daniil\Projects\my-bot\questions\hard_questions.json", "r", encoding="utf-8") as f:
+    with open(r"C:\Users\Daniil\Projects\my-bot\questions\tea_data_questions.json", "r", encoding="utf-8") as f:
         test_data = json.load(f)
 
     results = []
