@@ -311,26 +311,12 @@ class LangChainQueryProcessor:
             verbose=True,
             handle_parsing_errors=True,
             max_iterations=10
-        )
+        ) 
 
     def process_query_with_agent(self, user_input: str) -> str:
-        # Сохраняем текущий запрос в истории
-        self.memory.save_context({"input": user_input}, {"output": ""})  # Пустой вывод, пока нет ответа
-        
-        # Получаем последние 6 сообщений из памяти (3 вопроса и 3 ответа)
-        chat_history = self.memory.load_memory_variables({})["chat_history"][-6:]
-        
-        # Формируем контекст с вопросами и ответами
-        context = "\n".join([f"Q: {chat_history[i].content}\nA: {chat_history[i + 1].content}" for i in range(0, len(chat_history), 2)])
-
-        # Создаем запрос с контекстом
-        response = self.agent_executor.invoke({
-            "input": user_input + "            Предыдущие сообщения: " + context 
-        })
-
-        # Обновляем память с новым ответом
-        self.memory.save_context({"input": user_input}, {"output": response})
-
+        """Вызываем нашего агента (с учётом истории в памяти)."""
+        result = self.agent_executor({"input": user_input})
+        response = result["output"]
         return response
 
 
