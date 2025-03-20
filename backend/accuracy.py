@@ -6,8 +6,8 @@ import torch.nn.functional as F
 # ---------------------------
 # 1. Загрузка данных из JSON
 # ---------------------------
-reference_path = r"C:\Users\Daniil\Projects\my-bot\questions\tea_data_questions.json"  # Эталонные ответы
-model_path = r"C:\Users\Daniil\Projects\my-bot\backend\responses\tea_descriptions.json"  # Ответы модели
+reference_path = r"questions\tea_data_questions.json"  # Эталонные ответы
+model_path = r"backend\responses\tea_descriptions.json"  # Ответы модели
 
 with open(reference_path, "r", encoding="utf-8") as f:
     reference_data = json.load(f)
@@ -87,6 +87,6 @@ print(results_text)
 # -------------------------
 # 5. Сохранение результатов в файл
 # -------------------------
-output_path = r"C:\Users\Daniil\Projects\my-bot\backend\test_results\tea_data_results.txt"
+output_path = r"backend\test_results\tea_data_results.txt"
 with open(output_path, "w", encoding="utf-8") as out_file:
     out_file.write(results_text)
