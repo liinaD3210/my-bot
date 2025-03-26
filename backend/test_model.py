@@ -385,9 +385,9 @@ class LangChainQueryProcessor:
 
 # ====================== ИНИЦИАЛИЗАЦИЯ НАШЕГО КЛАССА (ПУТИ К JSON) ======================
 
-JSON_TEA_PATH = r"C:\Users\Daniil\Projects\my-bot\tea_data.json"            # Товары (название, описание, цена)
-JSON_ORDERS_PATH = r"C:\Users\Daniil\Projects\my-bot\orders.json"           # Заказы (номер заказа, статус, дата и т.д.)
-JSON_SIMILAR_PATH = r"C:\Users\Daniil\Projects\my-bot\similar_products.json" # Похожие товары
+JSON_TEA_PATH = r"tea_data.json"            # Товары (название, описание, цена)
+JSON_ORDERS_PATH = r"orders.json"           # Заказы (номер заказа, статус, дата и т.д.)
+JSON_SIMILAR_PATH = r"similar_products.json" # Похожие товары
 
 file_search = LangChainQueryProcessor(
     json_file_tea=JSON_TEA_PATH,
@@ -412,7 +412,7 @@ if __name__ == "__main__":
        и создаст файл test_data_result.json, где будут поля: "Вопрос" и "Ответ модели".
     """
     # Загружаем тестовые данные
-    with open(r"C:\Users\Daniil\Projects\my-bot\questions\tea_data_questions.json", "r", encoding="utf-8") as f:
+    with open(r"questions\tea_data_questions.json", "r", encoding="utf-8") as f:
         test_data = json.load(f)
 
     results = []

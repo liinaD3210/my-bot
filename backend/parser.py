@@ -123,7 +123,7 @@ class LangChainQueryProcessor:
             json.dump(responses, f, indent=4, ensure_ascii=False)
 
 # Пример использования
-file_search = LangChainQueryProcessor([r"C:\Users\Daniil\Projects\my-bot\pars.pdf"])
+file_search = LangChainQueryProcessor([r"pars.pdf"])
 
 # Загружаем вопросы из JSON и обрабатываем их
 file_search.process_questions_from_json('C:\\Users\\Daniil\\Projects\\my-bot\\evaluation_dataset.json')

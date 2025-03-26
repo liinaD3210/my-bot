@@ -15,8 +15,6 @@ from langchain.agents import create_react_agent, Tool, AgentExecutor
 from langchain.tools import BaseTool
 from langchain.memory import ConversationBufferMemory
 
-# (Для примера, если используете gigachat.context)
-import gigachat.context
 from typing import Any
 
 import re
@@ -287,7 +285,7 @@ class CustomOutputParser(AgentOutputParser):
 
 # ====================== PROMPT TEMPLATE (расширенный) ======================
 
-with open(r'C:\Users\Daniil\Projects\my-bot\backend\instruction.txt', 'r', encoding='utf-8') as f:
+with open(r'backend\instruction.txt', 'r', encoding='utf-8') as f:
     REACT_PROMPT_TEMPLATE = f.read()
 
 # ====================== ОСНОВНОЙ КЛАСС ДЛЯ ОБРАБОТКИ ЗАПРОСОВ ======================
@@ -298,10 +296,10 @@ class LangChainQueryProcessor:
     """
     def __init__(self, json_file_tea, json_file_orders, json_file_similar):
         # Установим заголовок для GigaChat (при необходимости)
-        headers = {
-            "X-Session-ID": "8324244b-7133-4d30-a328-31d8466e5503",
-        }
-        gigachat.context.session_id_cvar.set(headers.get("X-Session-ID"))
+        # headers = {
+        #     "X-Session-ID": "8324244b-7133-4d30-a328-31d8466e5503",
+        # }
+        # gigachat.context.session_id_cvar.set(headers.get("X-Session-ID"))
 
         # Токен для GigaChat (пример, у вас может быть свой)
         GIGACHAT_CREDENTIALS = (
@@ -354,7 +352,7 @@ class LangChainQueryProcessor:
 
         # PromptTemplate
         self.custom_prompt = PromptTemplate(
-            input_variables=["input","tools", "tool_names", "agent_scratchpad"],
+            input_variables=["input","tools", "tool_names", "agent_scratchpad", "chat_history"],
             template=REACT_PROMPT_TEMPLATE
         )
 
@@ -373,7 +371,7 @@ class LangChainQueryProcessor:
             memory=self.memory,
             verbose=True,
             handle_parsing_errors=True,
-            max_iterations=10
+            max_iterations=20
         ) 
 
     def process_query_with_agent(self, user_input: str) -> str:
@@ -387,9 +385,9 @@ class LangChainQueryProcessor:
 # ====================== ИНИЦИАЛИЗАЦИЯ НАШЕГО КЛАССА ======================
 
 # Пропишите пути к вашим файлам
-JSON_TEA_PATH = r"C:\Users\Daniil\Projects\my-bot\tea_data.json"            # Товары (название, описание, цена)
-JSON_ORDERS_PATH = r"C:\Users\Daniil\Projects\my-bot\orders.json"      # Заказы (номер заказа, статус, дата и т.д.)
-JSON_SIMILAR_PATH = r"C:\Users\Daniil\Projects\my-bot\similar_products.json" # Похожие товары
+JSON_TEA_PATH = r"tea_data.json"            # Товары (название, описание, цена)
+JSON_ORDERS_PATH = r"orders.json"      # Заказы (номер заказа, статус, дата и т.д.)
+JSON_SIMILAR_PATH = r"similar_products.json" # Похожие товары
 
 file_search = LangChainQueryProcessor(
     json_file_tea=JSON_TEA_PATH,

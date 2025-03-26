@@ -1,9 +1,9 @@
 import json
 
 # Пути к вашим JSON-файлам
-model_answers_file = r'C:\Users\Daniil\Projects\my-bot\backend\responses\tea_prices.json'
-reference_answers_file = r'C:\Users\Daniil\Projects\my-bot\questions\tea_data_questions.json'
-results_file = r'C:\Users\Daniil\Projects\my-bot\backend\test_results\tea_prices_results.txt'
+model_answers_file = r'backend\responses\tea_prices.json'
+reference_answers_file = r'questions\tea_data_questions.json'
+results_file = r'backend\test_results\tea_prices_results.txt'
 
 # Считываем JSON с ответами модели
 with open(model_answers_file, 'r', encoding='utf-8') as f:
