@@ -5,42 +5,42 @@ from langchain.tools import BaseTool
 class JSONNameSearchTool(BaseTool):
     """
     Инструмент, который загружает JSON и ищет *строго/частично* по 'Название' товара.
-    Возвращает найденные записи (название, описание, цена) в текстовом виде.
+    Возвращает найденные записи с названием и значением указанного ключа в текстовом виде.
     """
     name: str = "json_name_search"
     description: str = (
         "Быстрый поиск по названию товара в JSON. "
-        "Используй, когда пользователь явно назвал товар (например 'чай Эрл Грей')."
+        "Ожидает ввод в формате 'Название, Ключ'. Например: 'чай Эрл Грей, Описание'."
     )
 
     json_path: str
 
     def _run(self, query: str) -> str:
+        # Ожидаем, что query имеет формат: "Название, Ключ"
+        try:
+            search_term, key = [x.strip() for x in query.split(",", 1)]
+        except ValueError:
+            return "Ошибка: ввод должен быть в формате 'Название, Ключ'."
+        
         try:
             with open(self.json_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
         except Exception as e:
             return f"Ошибка при чтении JSON: {e}"
-
-        # Небольшая логика: считаем, что query = название товара или часть названия
-        query_lower = query.strip().lower()
+        
+        search_term_lower = search_term.lower()
         results = []
         for idx, item in enumerate(data, start=1):
             name = item.get('Название', '')
-            desc = item.get('Описание', '')
-            price = item.get('Цена', '')
-
-            # Простейшее частичное совпадение:
-            if query_lower in name.lower():
-                snippet = (
-                    f"Название: {name}\n"
-                    f"Описание: {desc}\n"
-                    f"Цена: {price}"
-                )
+            # Проверка по частичному совпадению в названии
+            if search_term_lower in name.lower():
+                # Если искомый ключ не найден, выводим сообщение об отсутствии
+                value = item.get(key, "Поле не найдено")
+                snippet = f"Название: {name}\n{key}: {value}"
                 results.append(f"[doc {idx}] {snippet}")
-
+        
         if not results:
-            return ""  # Если ничего не найдено
+            return "Ничего не найдено."
         return "\n".join(results)
 
     async def _arun(self, query: str) -> str:
@@ -65,7 +65,7 @@ if __name__ == "__main__":
     tool = JSONNameSearchTool(json_path=json_file)
 
     # Получаем запрос от пользователя
-    query = input("Введите: ").strip()
+    query = input("Введите (Название, Ключ): ").strip()
 
     # Вызываем инструмент (синхронная версия)
     result = tool._run(query)

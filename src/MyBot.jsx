@@ -117,7 +117,7 @@ const SimpleBot = () => {
 
         <div
           style={{
-            maxHeight: '300px',
+            maxHeight: '500px',
             overflowY: 'auto',
             marginBottom: '20px',
             padding: '10px',

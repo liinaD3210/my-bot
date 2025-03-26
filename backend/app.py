@@ -30,24 +30,36 @@ CORS(app)
 
 # ====================== КАСТОМНЫЕ ИНСТРУМЕНТЫ ======================
 
+import json
+import os
+from langchain.tools import BaseTool
+
 class JSONNameSearchTool(BaseTool):
     """
     Инструмент, который загружает JSON и ищет *строго/частично* по 'Название' товара.
-    Возвращает найденные записи (название, описание, цена) в текстовом виде.
+    Возвращает найденные записи (название + значение указанного ключа) в текстовом виде.
     """
     name: str = "json_name_search"
     description: str = (
         "Быстрый поиск по названию товара в JSON. "
-        "Используй, если пользователь спрашивает детали о товаре."
+        "Используй, если пользователь спрашивает детали о товаре (цену или описание). "
+        "Ожидается ввод в формате: '<Название товара>, <Ключ>'. "
+        "Ключ может быть 'Описание' или 'Цена'."
     )
     json_path: str
 
     def _run(self, query: str) -> str:
         print(f"[DEBUG] Tool '{self.name}' called with input: {query}")
-        if len(query.split()) < 1:
-            print("ОШИБКА!!! Пустая строка")
-            return ""
-        
+
+        # Проверяем, что у нас действительно есть два элемента: название и ключ
+        parts = query.split(",", 1)
+        if len(parts) < 2:
+            return "Ошибка: инструмент ожидает ввод в формате '<Название товара>, <Описание или Цена>'."
+
+        raw_name, key = parts
+        raw_name = raw_name.strip()
+        key = key.strip()
+
         try:
             with open(self.json_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -56,31 +68,29 @@ class JSONNameSearchTool(BaseTool):
             print(f"[DEBUG] Tool '{self.name}' output: {result}")
             return result
 
-        query_lower = query.strip().lower()
+        name_lower = raw_name.lower()
         results = []
         for idx, item in enumerate(data, start=1):
             name = item.get('Название', '')
-            desc = item.get('Описание', '')
-            price = item.get('Цена', '')
-
-            if query_lower in name.lower():
-                snippet = (
-                    f"Название: {name}\n"
-                    f"Описание: {desc}\n"
-                    f"Цена: {price}"
-                )
+            # Проверка на частичное совпадение искомого названия
+            if name_lower in name.lower():
+                # Извлекаем значение указанного ключа
+                value = item.get(key, "Поле не найдено")
+                snippet = f"Название: {name}\n{key}: {value}"
                 results.append(f"[doc {idx}] {snippet}")
 
         if not results:
-            result = ""  # Если ничего не найдено
+            result = ""
         else:
             result = "\n".join(results)
-        
+
         print(f"[DEBUG] Tool '{self.name}' output: {result}")
         return result
 
     async def _arun(self, query: str) -> str:
         raise NotImplementedError("Async not implemented")
+
+
 
 
 class JSONOrderSearchTool(BaseTool):
@@ -189,6 +199,53 @@ class JSONSimilarProductsTool(BaseTool):
     async def _arun(self, query: str) -> str:
         raise NotImplementedError("Async not implemented")
 
+class JSONTasteSearchTool(BaseTool):
+    """
+    Инструмент, который загружает JSON и ищет товары по ключу 'Вкус'.
+    Возвращает найденные записи (название товара и значение 'Вкус') в текстовом виде.
+    """
+    name: str = "json_taste_search"
+    description: str = (
+        "Быстрый поиск по вкусу товара в JSON. "
+        "Используй, если пользователь хочет найти товар по конкретному вкусу. "
+        "Ожидается ввод в формате: '<Вкус>' (например, 'Черный'). "
+        "Возвращает 'Название товара' и 'Вкус' найденных товаров."
+    )
+    json_path: str
+
+    def _run(self, query: str) -> str:
+        print(f"[DEBUG] Tool '{self.name}' called with input: {query}")
+
+        taste_query = query.strip().lower()
+        if not taste_query:
+            return "Ошибка: пустой запрос. Пожалуйста, укажите вкус для поиска."
+
+        try:
+            with open(self.json_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            result = f"Ошибка при чтении JSON: {e}"
+            print(f"[DEBUG] Tool '{self.name}' output: {result}")
+            return result
+
+        results = []
+        for idx, item in enumerate(data, start=1):
+            taste = item.get("Вкус")
+            if taste and taste_query in taste.lower():
+                name = item.get("Название", "Неизвестное название")
+                snippet = f"Название товара: {name}\nВкус: {taste}"
+                results.append(f"[doc {idx}] {snippet}")
+
+        if not results:
+            result = "Нет товаров с указанным вкусом."
+        else:
+            result = "\n".join(results)
+
+        print(f"[DEBUG] Tool '{self.name}' output: {result}")
+        return result
+
+    async def _arun(self, query: str) -> str:
+        raise NotImplementedError("Async not implemented")
 
 # ====================== КАСТОМНЫЙ OUTPUT PARSER ======================
 
@@ -259,10 +316,11 @@ class LangChainQueryProcessor:
             verify_ssl_certs=False,
         )
 
-        # Инициализируем три инструмента
+        # Инициализируем четыре инструмента
         self.json_name_search_tool = JSONNameSearchTool(json_path=json_file_tea)
         self.json_order_search_tool = JSONOrderSearchTool(json_path=json_file_orders)
         self.json_similar_products_tool = JSONSimilarProductsTool(json_path=json_file_similar)
+        self.json_taste_search_tool = JSONTasteSearchTool(json_path=json_file_tea)
 
         # Собираем их в список Tools
         self.tools = [
@@ -280,6 +338,11 @@ class LangChainQueryProcessor:
                 name=self.json_similar_products_tool.name,
                 func=self.json_similar_products_tool.run,
                 description=self.json_similar_products_tool.description
+            ),
+            Tool(
+                name=self.json_taste_search_tool.name,
+                func=self.json_taste_search_tool.run,
+                description=self.json_taste_search_tool.description
             ),
         ]
 
